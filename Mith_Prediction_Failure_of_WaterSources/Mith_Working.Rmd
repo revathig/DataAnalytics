@@ -1,0 +1,739 @@
+---
+title: "mith"
+author: Revathi
+Date: 19-05-2018
+output: html_document
+---
+
+#Clear the Environment variables
+
+```{r}
+rm(list=ls(all=TRUE))
+```
+
+##### Load the required Packages
+
+###most of them are added part of the package if required add them here
+
+
+```{r message=FALSE}
+
+
+library(caret)
+library(DataExplorer)
+library(DMwR)
+library(dplyr)
+library(C50)
+library(rpart)
+library(randomForest)
+library(ROCR)
+library(corrplot)
+library(e1071)
+library(class)
+library(ada)
+library(xgboost)
+library(forcats)
+library(MASS)
+
+```
+####some more functions if required add here
+
+
+```{r}
+readdata <- function(path,file)
+{
+  setwd(path)
+  Data = read.csv(file)
+  return(Data)
+}
+
+### get the rownumber of the outlier in the particular attribute
+##Not removing here. Leaving the emoval decison to the calling function
+removeoutlier = function(columndata, nrows)
+{
+  max_col_val = max(columndata, na.rm=T)
+
+  i =1
+  while(i <  nrows)
+  {
+    curval = columndata[i]
+    curval
+    if (max_col_val == curval ) {
+      rownum = i
+      break
+
+    }
+    i= i+1
+
+  }
+
+  return(rownum)
+}
+
+####Print the columns which possibly have outliers
+###As of now it is not very nice but useful to predict.
+
+FindOutliers <- function(numeric_attrdata)
+{
+  i =1
+  while(i < ncol(numeric_attrdata))
+  {
+    summarycol = summary(numeric_attrdata[ , i])
+
+    if((summarycol["3rd Qu."]*2) < summarycol["Max."])
+    {
+      print(colnames(numattr[i]))
+      print(summarycol)
+    }
+    i= i+1
+  }
+
+}
+
+###Get the character attribute
+###Later we might need to change them to categorical
+
+getcharattr <-function(data)
+{
+  charattr = data[ ,sapply(data,is.character)]
+  return(charattr)
+}
+
+####Get the categorical subset from the data
+getcatgoricalattr <- function(data)
+{
+  categoricalattr = data[ ,sapply(data, is.factor)]
+  return (categoricalattr)
+}
+
+####Get the numerical subset from the data
+getnumericalattr <- function(data)
+{
+  numericattr = data[ ,sapply(data, is.numeric)]
+  return (numericattr)
+}
+
+
+#####Reduce the number levels in categorical attribute
+###usingforcats library fct_collapse function
+
+catatt_reducelevels <- function(attr, newlevel, levels)
+{
+  print(newlevel)
+
+  attr = fct_collapse(attr, newlevel = levels)
+  levels(attr)[levels(attr)=="newlevel"] <- newlevel
+
+  return(attr)
+}
+
+
+#### Visuvalization of data
+### Plot missing is the best
+###Not sure i will call this I will call the individual functions below
+DataVisualize <-function(data)
+{
+  plot_str(data)
+  plot_missing(data)
+  plot_histogram(data)
+  plot_density(data)
+  plot_correlation(data)
+}
+
+### Prediction function
+
+model_predict <- function(model, data_to_predict, type="response", isRF = FALSE, threshhold = 0)
+{
+   if(isRF)
+   {
+     pred_val = predict(model, data_to_predict, type=type, norm.votes=TRUE)
+   }else
+   {
+     pred_val = predict(model, data_to_predict, type= type)
+   }
+
+   if(threshhold >0)
+   {
+     pred_val = ifelse(pred_val>threshhold,"non functional","functional")
+   }
+
+   pred_val
+}
+
+##change to return the required method
+#accuracy or f1
+
+model_analysis <- function(model, data_to_predict, y_val, type="response", isRF = FALSE, threshhold = 0)
+{
+  pred_val = model_predict(model,data_to_predict, type, isRF, threshhold)
+
+  cm = confusionMatrix(pred_val, y_val)
+  cm
+  print(cm)
+}
+
+# write ti a file
+## need to change here
+
+Createoutputfile <- function(model, data_to_predict, type="response",
+                             isRF = FALSE, threshhold = 0)
+{
+  pred_val = model_predict(model,data_to_predict, type, isRF, threshhold)
+  write.csv(pred_val,file="TestPred.csv")
+
+  myoutput = read.csv("TestPred.csv", header =T)
+  str(myoutput)
+
+
+  colnames(myoutput) = c("id", "status")
+
+  colnames(myoutput)
+  str(myoutput)
+
+  write.csv(file = "Mithpredict.csv",x= myoutput,row.names = FALSE)
+
+}
+
+
+```
+
+##Opening the file and Preprocessing
+
+
+
+```{r echo=FALSE}
+dataset = readdata("D:/Course/Rstart/Mith","train.csv")
+dataset_target = readdata("D:/Course/Rstart/Mith","trainlabels.csv")
+testdata = readdata("D:/Course/Rstart/Mith","test.csv")
+
+```
+
+### Data analysing
+  1.  Summary
+  2. structure
+  3. viewing
+```{r}
+summary(dataset)
+
+str(dataset)
+str(testdata)
+head(dataset)
+tail(dataset)
+
+
+```
+
+
+##viewing of the target variable
+
+```{r}
+str(dataset_target)
+
+#view(dataset)
+colnames(dataset_target) = c("Id", "status")
+
+```
+
+```{r}
+
+summary(dataset_target)
+```
+###Merge the target variable with the dataset
+
+```{r}
+
+dataset_withtarget = merge(x = dataset, y = dataset_target,by = "Id", all = T)
+
+summary(dataset_withtarget)
+```
+
+
+
+
+###Just viewing to check the data after merge
+
+```{r}
+tail(dataset_withtarget)
+```
+
+####PreProcessing
+
+
+### Remove the Id and Organization from the data set
+###Organization survayed is not unique we can remove 
+### extarction, extarction_type,extraction_class have the same value we can have only one.
+### Water quality, water_quality_group also has the similar values we can remove one of them
+### Quatity and quatity_group also has the same values we can remove one of them
+### Payment and payment_type also has the same value we can remove one of them
+### source, source_type we can have one of them
+### Region name and region code also mean the same we can remove one
+### remove waterpoint name and village also
+
+```{r}
+remcols = c("Id", "Organization_surveyed", "Payment","Extraction_type","Extraction_type_group",  
+            "Water_quality","Quantity_group","Source", "Regionname", "Waterpointname", "Village", "SchemeName",
+             "Wardname", "Water_point_type_group", "Source_type", "Scheme_management")
+valid_cols = setdiff(x=colnames(dataset_withtarget), y=remcols)
+validcols_test = setdiff(x=colnames(testdata), y=remcols)
+
+print(valid_cols)
+
+dataset_temp = dataset_withtarget[, valid_cols]
+testdata = testdata[ , validcols_test]
+
+```
+
+View the new data set
+
+```{r}
+str(dataset_temp)
+
+```
+correlation between categorical attributes
+
+```{r}
+
+#chisq.test(dataset_temp$Organization_funding, dataset_temp$Scheme_management)
+#chisq.test(dataset_temp$Organization_funding, dataset_temp$Management)
+#chisq.test(dataset_temp$Scheme_management,dataset_temp$Management )
+#chisq.test(dataset_temp$Company_installed, dataset_temp$Management)
+#chisq.test(dataset_temp$Company_installed,dataset_temp$Scheme_management)
+
+```
+
+#Reduce the levels of the categorical attributes
+
+I have mot done these Remove already from the data set.
+#REplace the space with NA's
+
+   
+    
+
+
+
+levels(dataset$Company_installed)
+
+## define a helper function
+empty_as_na <- function(x){
+    if("factor" %in% class(x)) x <- as.character(x) ## since ifelse wont work with factors
+    ifelse(as.character(x)!=" ", x, NA)
+}
+
+## transform all columns
+dataset_temp %>% mutate_each(funs(empty_as_na)) 
+
+dataset_temp = dataset_temp
+
+
+```{r}
+
+dataset_temp_catconvert = dataset_temp
+#levels(dataset_temp_catconvert$Organization_funding)
+
+dataset_temp_catconvert$Organization_funding = catatt_reducelevels(dataset_temp_catconvert$Organization_funding, "other", c("","-","0"))
+#levels(dataset_temp_catconvert$Organization_funding)
+#table(dataset_temp_catconvert$Organization_funding, dataset_temp_catconvert$status)
+levelnames = levels(dataset_temp_catconvert$Organization_funding)
+#print(levelnames)
+levelnames = levelnames[-1]
+
+levelnamesiorg = levelnames[1:1348]
+
+
+levelnamesorg = levelnames[1349: (1349+1034)]
+#print(levelnamesorg)
+
+dataset_temp_catconvert$Organization_funding = catatt_reducelevels(dataset_temp_catconvert$Organization_funding,
+                                                                  "Iorg", levelnamesiorg) 
+dataset_temp_catconvert$Organization_funding = catatt_reducelevels(dataset_temp_catconvert$Organization_funding,
+                                                                  "org", levelnamesorg) 
+
+#levels(dataset_temp_catconvert$Organization_funding)
+table(dataset_temp_catconvert$Organization_funding, dataset_temp$status)
+
+
+
+```
+
+
+
+                                                         
+
+Do the same for test data
+
+```{r}
+#levels(testdata$Organization_funding)
+
+levelnames = levels(testdata$Organization_funding)
+
+
+
+levelnamesiorg = levelnames[1:579]
+
+
+levelnamesorg = levelnames[580:1216]
+
+testdata$Organization_funding = catatt_reducelevels(testdata$Organization_funding,
+                                                                  "Iorg", levelnamesiorg) 
+
+testdata$Organization_funding = catatt_reducelevels(testdata$Organization_funding,
+                                                                  "org", levelnamesorg) 
+
+
+
+```
+
+Reduce levels for company insatlled
+
+```{r}
+#levels(dataset_temp_catconvert$Company_installed)
+
+dataset_temp_catconvert$Company_installed = catatt_reducelevels(dataset_temp_catconvert$Company_installed, "other", c("","-","0"))
+#levels(dataset_temp_catconvert$Company_installed)
+#table(dataset_temp_catconvert$Company_installed, dataset_temp_catconvert$status)
+levelnames = levels(dataset_temp_catconvert$Company_installed)
+#print(levelnames)
+#print(levelnames[1000:1872])
+levelnames = levelnames[-1]
+
+levelnames1 = levelnames[1:970]
+levelnames2 = levelnames[971:1193]
+levelnamesother = levelnames[1194:1872]
+
+#print(levelnamesorg)
+
+dataset_temp_catconvert$Company_installed = catatt_reducelevels(dataset_temp_catconvert$Company_installed,
+                                                                  "Iorg1", levelnames1) 
+dataset_temp_catconvert$Company_installed = catatt_reducelevels(dataset_temp_catconvert$Company_installed,
+                                                                  "Iorg2", levelnames2) 
+dataset_temp_catconvert$Company_installed = catatt_reducelevels(dataset_temp_catconvert$Company_installed,
+                                                                  "Iorgother", levelnamesother)
+
+#levels(dataset_temp_catconvert$Company_installed)
+table(dataset_temp_catconvert$Company_installed, dataset_temp_catconvert$status)
+
+
+
+
+```
+
+
+
+```{r}
+#levels(testdata$Company_installed)
+
+levelnames = levels(testdata$Company_installed)
+
+
+
+levelnames1 = levelnames[1:672]
+
+
+levelnames2 = levelnames[673:783]
+levelnamesother = levelnames[784:1233]
+testdata$Company_installed = catatt_reducelevels(testdata$Company_installed,
+                                                                  "Iorg1", levelnames1) 
+testdata$Company_installed = catatt_reducelevels(testdata$Company_installed,
+                                                                  "Iorg2", levelnames2) 
+                                                                  
+
+testdata$Company_installed = catatt_reducelevels(testdata$Company_installed,
+                                                                  "Iorgother", levelnamesother)
+
+```
+Reduce the levels For management
+```{r}
+
+```
+
+
+```{r}
+summary(dataset_temp_catconvert)
+```
+
+
+```{r}
+plot_missing(dataset_temp)
+```
+
+
+####Visuvalizations
+
+
+```{r}
+DataVisualize(dataset)
+
+
+```
+
+
+```{r}
+plot_correlation(dataset_temp_catconvert)
+
+create_report(dataset_temp_catconvert)
+```
+
+convert the logical attributes to categorical
+```{r }
+
+dataset_temp_catconvert$Public_meeting = as.factor(as.character(dataset_temp_catconvert$Public_meeting))
+str(dataset_temp_catconvert$Public_meeting)
+dataset_temp_catconvert$Permit = as.factor(as.character(dataset_temp_catconvert$Permit))
+
+```
+
+Convert on the test data also
+
+```{r}
+
+testdata$Public_meeting = as.factor(as.character(testdata$Public_meeting))
+testdata$Permit = as.factor(as.character(testdata$Permit))
+
+
+```
+
+####checking for NA values 
+
+
+```{r}
+
+sum(is.na(dataset_temp_catconvert))
+
+colSums(is.na(dataset_temp_catconvert))
+max(rowSums(is.na(dataset_temp_catconvert)))
+manyNAs(is.na(dataset_temp_catconvert))
+```
+
+Imputation fo NA's
+
+```{r}
+
+dataset_imputed = centralImputation(dataset_temp_catconvert)
+```
+
+Impute On test data
+```{r}
+sum(is.na(testdata))
+testdata = centralImputation(testdata)
+
+
+```
+
+Split the data into train validation and test
+
+```{r}
+
+library(caret)
+set.seed(123)
+
+
+train_rows <- createDataPartition(dataset_imputed$status , p = 0.8, list = F)
+
+train_data <- dataset_imputed[train_rows, ]
+
+test_data <- dataset_imputed[-train_rows, ]
+
+print(nrow(train_data))
+print(nrow(test_data))
+```
+
+Split the train into train and validation
+```{r}
+set.seed(10)
+
+train_rows = createDataPartition(train_data$status, p=0.8, list = F)
+new_train_data = train_data[train_rows, ]
+
+validation_data = train_data[-train_rows, ]
+
+train_data = new_train_data
+rm(new_train_data)
+print(nrow(train_data))
+print(nrow(validation_data))
+
+```
+
+strandadize the data
+
+
+```{r}
+
+std_model <- preProcess(train_data[, !names(train_data) %in% c("status")], method = c("center", "scale"))
+
+
+train_data[, !names(train_data) %in% c("status")] <- predict(object = std_model, newdata = train_data[, !names(train_data) %in% c("status")])
+
+validation_data[, !names(validation_data) %in% c("status")] <- predict(object = std_model, newdata = validation_data[, !names(validation_data) %in% c("status")])
+
+test_data[, !names(test_data) %in% c("status")] <- predict(object = std_model, newdata = test_data[, !names(test_data) %in% c("status")])
+
+```
+
+
+Do on the test data
+```{r}
+testdata <- predict(object = std_model, newdata = testdata)
+
+```
+
+Build the basic model 
+
+
+```{r}
+basic_model <-glm(status~.,data=train_data,family = binomial)
+
+
+summary(basic_model)
+
+```
+predict on the validation data and test data
+Accuracy: 77%
+
+```{r}
+cm=  model_analysis(basic_model,validation_data,validation_data$status,threshhold = 0.4)
+cm=  model_analysis(basic_model,test_data,test_data$status,threshhold = 0.4)
+
+##Trying to remove the waterpont and build again
+
+str(train_data)
+remcols = c("Waterpoint_type_group", "Waterpoint_type")
+valid_cols = setdiff(x=colnames(train_data), y=remcols)
+
+validcols_test = setdiff(x=colnames(testdata), y=remcols)
+
+print(valid_cols)
+
+train_data = train_data[, valid_cols]
+validation_data= validation_data[, valid_cols]
+test_data = test_data[,valid_cols]
+testdata = testdata[ , validcols_test]
+
+### TRying to reduce the levels for management
+levels(train_data$Management)
+table(train_data$Management, train_data$status)
+train_data$Management = catatt_reducelevels(train_data$Management, "Other" ,c("other", "other - school", "unknown")) 
+train_data$Management = catatt_reducelevels(train_data$Management, "company" ,c("company", "parastatal",
+                                                               "private operator","trust" ))
+
+train_data$Management = catatt_reducelevels(train_data$Management, "wua" ,c("water authority", "water board",
+                                                               "wua","wug" ))
+
+table(train_data$Management, train_data$status)
+
+##Do it on the validation test and main test
+
+validation_data$Management = catatt_reducelevels(validation_data$Management, "Other" ,c("other", "other - school", "unknown")) 
+validation_data$Management = catatt_reducelevels(validation_data$Management, "company" ,c("company", "parastatal",
+                                                               "private operator","trust" ))
+
+validation_data$Management = catatt_reducelevels(validation_data$Management, "wua" ,c("water authority", "water board",
+                                                               "wua","wug" ))
+
+
+
+test_data$Management = catatt_reducelevels(test_data$Management, "Other" ,c("other", "other - school", "unknown")) 
+test_data$Management = catatt_reducelevels(test_data$Management, "company" ,c("company", "parastatal",
+                                                               "private operator","trust" ))
+
+test_data$Management = catatt_reducelevels(test_data$Management, "wua" ,c("water authority", "water board",
+                                                               "wua","wug" ))
+
+
+testdata$Management = catatt_reducelevels(testdata$Management, "Other" ,c("other", "other - school", "unknown")) 
+testdata$Management = catatt_reducelevels(testdata$Management, "company" ,c("company", "parastatal",
+                                                               "private operator","trust" ))
+
+testdata$Management = catatt_reducelevels(testdata$Management, "wua" ,c("water authority", "water board",
+                                                               "wua","wug" ))
+
+
+model1 = glm(status~.,data=train_data,family = binomial)
+
+
+summary(model1)
+
+
+cm=  model_analysis(model1,validation_data,validation_data$status,threshhold = 0.4)
+cm=  model_analysis(model1,test_data,test_data$status,threshhold = 0.4)
+```
+
+
+#```{r}
+
+
+pred_val = model_predict(basic_model,testdata, threshhold = 0.5)
+write.csv(pred_val,file="TestPred.csv")
+
+myoutput = read.csv("TestPred.csv", header =T)
+str(myoutput)
+
+test_index = read.csv("test.csv", header= T)
+
+myoutput$X =NULL
+str(myoutput)
+myoutput = cbind(test_index$Id, myoutput)  
+str(myoutput)
+head(myoutput)
+colnames(myoutput) = c("Id", "Status")
+
+colnames(myoutput)
+str(myoutput)
+
+write.csv(file = "Mithpredictlm.csv",x= myoutput,row.names = FALSE)
+
+#Createoutputfile(model,testdata, type="vector")
+
+
+#```
+
+Trying with stepAIC to reduce the dimensions
+
+nu= 0.4 87% Accuracy
+
+```{r}
+
+train_data_wotarget = train_data[,!names(train_data) %in% c("status")]
+
+validation_data_wotarget = validation_data[,!names(validation_data) %in% c("status")]
+test_data_wotarget= test_data[,!names(validation_data) %in% c("status")]
+colnames(train_data_wotarget)
+colnames(test_Data_wotarget)
+colnames(testdata_imputed)
+#Build the Ada boost model
+
+model = ada(x = train_data_wotarget,y = train_data$status,
+            iter = 100, loss = "exponential", type="discrete", nu =0.4)
+#Look at the model summary
+
+summary(model)
+
+model_analysis(model,validation_data_wotarget,validation_data$status,threshhold =0)
+
+model_analysis(model,test_data_wotarget,test_data$status,threshhold =0)
+
+
+```
+
+
+```{r}
+pred_val = model_predict(model,testdata, type="vector")
+write.csv(pred_val,file="TestPred.csv")
+
+myoutput = read.csv("TestPred.csv", header =T)
+str(myoutput)
+
+test_index = read.csv("test.csv", header= T)
+
+myoutput$X =NULL
+str(myoutput)
+myoutput = cbind(test_index$Id, myoutput)  
+str(myoutput)
+head(myoutput)
+colnames(myoutput) = c("Id", "Status")
+
+colnames(myoutput)
+str(myoutput)
+
+write.csv(file = "Mithpredictada1.csv",x= myoutput,row.names = FALSE)
+```
+

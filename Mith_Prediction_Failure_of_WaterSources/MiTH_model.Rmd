@@ -1,0 +1,43 @@
+---
+title: "mith"
+author: Revathi
+Date: 19-05-2018
+output: html_document
+---
+
+#Clear the Environment variables
+
+```{r}
+rm(list=ls(all=TRUE))
+```
+
+##### Load the required Packages
+
+
+
+
+```{r message=FALSE}
+library(DMwR)
+library(caret)
+library(dplyr)
+library(C50)
+library(rpart)
+library(randomForest)
+library(ROCR)
+library(corrplot)
+library(e1071)
+library(class)
+library(ada)
+library(xgboost)
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
